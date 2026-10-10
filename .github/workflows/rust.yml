@@ -1,0 +1,30 @@
+name: Rust CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  check:
+    name: Build, test and Clippy
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Install stable Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+
+      - name: Cache Cargo artifacts
+        uses: Swatinem/rust-cache@v2
+
+      - name: Build
+        run: cargo build
+
+      - name: Test
+        run: cargo test
+
+      - name: Clippy
+        run: cargo clippy -- -D warnings

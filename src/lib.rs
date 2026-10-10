@@ -5,11 +5,11 @@
 
 pub mod cargo_rust;
 mod compile_commands_clang;
-mod maven_java;
+pub mod maven_java;
 
 use cargo_rust::CargoRustResolver;
 use compile_commands_clang::CompileCommandsClangResolver;
-use maven_java::MavenJavaResolver;
+use maven_java::{MavenJavaError, MavenJavaResolver};
 use std::path::Path;
 
 /// Available symbol resolution backends.
@@ -23,6 +23,28 @@ pub enum Backend {
 /// Common interface for resolving a symbol to source code.
 pub trait SymbolResolver {
     fn resolve(&self, symbol: &str) -> String;
+}
+
+/// Initialization errors for the selected backend.
+#[derive(Debug)]
+pub enum ResolverError {
+    Cargo(cargo_metadata::Error),
+    Maven(MavenJavaError),
+}
+impl std::fmt::Display for ResolverError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Cargo(error) => write!(f, "{error}"),
+            Self::Maven(error) => write!(f, "{error}"),
+        }
+    }
+}
+impl std::error::Error for ResolverError {}
+impl From<cargo_metadata::Error> for ResolverError {
+    fn from(error: cargo_metadata::Error) -> Self { Self::Cargo(error) }
+}
+impl From<MavenJavaError> for ResolverError {
+    fn from(error: MavenJavaError) -> Self { Self::Maven(error) }
 }
 
 /// A symbol resolver configured for a particular backend.
@@ -49,10 +71,10 @@ impl Resolver {
     pub fn with_project_dir(
         backend: Backend,
         project_dir: impl AsRef<Path>,
-    ) -> Result<Self, cargo_metadata::Error> {
+    ) -> Result<Self, ResolverError> {
         let implementation = match backend {
             Backend::CargoRust => ResolverImpl::CargoRust(CargoRustResolver::new(project_dir)?),
-            Backend::MavenJava => ResolverImpl::MavenJava(MavenJavaResolver),
+            Backend::MavenJava => ResolverImpl::MavenJava(MavenJavaResolver::new(project_dir)?),
             Backend::CompileCommandsClang => {
                 ResolverImpl::CompileCommandsClang(CompileCommandsClangResolver)
             }

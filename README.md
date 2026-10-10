@@ -1,6 +1,6 @@
 # symbol_to_source_resolver
 
-Resolve source symbols to source files. Rust/Cargo has an initial implementation; Maven/Java and compile_commands/Clang are placeholders.
+Resolve source symbols to source files. Rust/Cargo has an initial implementation; Maven/Java has initial type discovery; compile_commands/Clang is a placeholder.
 
 ## Rust usage
 
@@ -73,4 +73,12 @@ commit on `fsscanner`'s `master` branch for reproducible builds.
 - Qualified names match **path suffixes**. An unqualified name can match multiple types; results are sorted and deduplicated.
 - Basic `mod`, inline modules, `#[path = "..."]`, and simple `crate::`, `self::`, `super::` impl paths are supported.
 - Named `use` aliases and re-exports are handled syntactically; glob imports, cross-crate resolution, conditional compilation, type aliases, and macro source provenance remain limited.
-- This returns file candidates, not exact line ranges. Java and C/C++ are not implemented yet.
+- This returns file candidates, not exact line ranges. Java has initial type discovery; C/C++ is not implemented yet.
+
+## Maven / Java
+
+`MavenJavaResolver::new(project_dir)?` accepts a project directory even without `pom.xml`. Call `resolve_files("org.example.MyClass")?` to locate Java classes, interfaces, enums and records. Uses `fsscanner` to find `src/main/java` and `src/test/java` files, including nested modules, excluding `target`. No Maven subprocess is launched. This is syntactic matching, not Java compiler name resolution; imports, methods, inheritance and nested type qualification are not yet supported.
+
+### Broken / incomplete Maven projects
+
+Java declarations are parsed using Tree-sitter, which produces partial syntax trees for malformed source files. Neither Maven nor javac is executed, and a missing `pom.xml` does not prevent lookup. Unreadable individual files are skipped. Maven-specific source-root configuration is not yet evaluated; conventional `src/main/java` and `src/test/java` paths are scanned.
