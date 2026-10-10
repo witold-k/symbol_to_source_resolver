@@ -131,7 +131,7 @@ fn scan_file(file: &Path, module: &[String], context: &mut ScanContext) {
     if !context.source_files.contains(&file) { return; }
     if !context.visited.insert((file.clone(), module.to_vec())) { return; }
     let Ok(source) = std::fs::read_to_string(&file) else { return };
-    let Ok(ast) = syn::parse_file(&source) else { return };
+    let ast = syn::parse_file(&source);
     // Rust's module lookup base differs between lib.rs/mod.rs and foo.rs.
     let parent = file.parent().unwrap_or(Path::new("."));
     let stem = file.file_stem().and_then(|s| s.to_str()).unwrap_or("");
@@ -140,7 +140,10 @@ fn scan_file(file: &Path, module: &[String], context: &mut ScanContext) {
     } else {
         parent.join(stem)
     };
-    scan_items(&ast.items, &file, &child_dir, module, context);
+    match ast {
+        Ok(ast) => scan_items(&ast.items, &file, &child_dir, module, context),
+        Err(_) => scan_tolerant(&source, &file, &child_dir, module, context),
+    }
 }
 
 fn scan_items(items: &[Item], file: &Path, child_dir: &Path, module: &[String], context: &mut ScanContext) {
@@ -258,5 +261,72 @@ impl SymbolResolver for CargoRustResolver {
         self.resolve_files(symbol)
             .map(|files| files.iter().map(|p| p.display().to_string()).collect::<Vec<_>>().join("\n"))
             .unwrap_or_default()
+    }
+}
+
+/// Recover declarations and external modules from syntactically incomplete files.
+/// Normal, fully parseable files continue through syn for precise impl/alias handling.
+fn scan_tolerant(source: &str, file: &Path, child_dir: &Path, module: &[String], context: &mut ScanContext) {
+    let mut parser = tree_sitter::Parser::new();
+    if parser.set_language(&tree_sitter_rust::LANGUAGE.into()).is_err() { return; }
+    let Some(tree) = parser.parse(source, None) else { return };
+    scan_tolerant_node(tree.root_node(), source.as_bytes(), file, child_dir, module, context);
+}
+
+fn scan_tolerant_node(
+    node: tree_sitter::Node<'_>, source: &[u8], file: &Path, child_dir: &Path,
+    module: &[String], context: &mut ScanContext,
+) {
+    let kind = node.kind();
+    let definition = matches!(kind, "struct_item" | "enum_item" | "union_item" | "trait_item" | "function_item" | "type_item");
+    if definition
+        && let Some(name) = node.child_by_field_name("name")
+        && let Ok(name) = name.utf8_text(source)
+    {
+        add_def(module, name, file, &mut context.definitions);
+    }
+    if kind == "use_declaration" {
+        // Recover syntactically valid use trees even when the surrounding file is broken.
+        if let Ok(text) = node.utf8_text(source)
+            && let Ok(item) = syn::parse_str::<syn::ItemUse>(text)
+        {
+            collect_use(&item.tree, module, &[], &mut context.aliases);
+        }
+    }
+    if kind == "impl_item" {
+        // Parsing an isolated impl with syn preserves generic types and path rules
+        // without relying on the surrounding file being valid.
+        if let Ok(text) = node.utf8_text(source)
+            && let Ok(item) = syn::parse_str::<syn::ItemImpl>(text)
+        {
+            let item = Item::Impl(item);
+            scan_items(&[item], file, child_dir, module, context);
+        }
+    }
+    if kind == "mod_item"
+        && let Some(name) = node.child_by_field_name("name")
+        && let Ok(name) = name.utf8_text(source)
+    {
+        let mut nested = module.to_vec();
+        nested.push(name.to_owned());
+        if let Some(body) = node.child_by_field_name("body") {
+            let mut cursor = body.walk();
+            for child in body.named_children(&mut cursor) {
+                scan_tolerant_node(child, source, file, &child_dir.join(name), &nested, context);
+            }
+        } else {
+            let candidate = child_dir.join(format!("{name}.rs"));
+            let candidate = if candidate.exists() { candidate } else { child_dir.join(name).join("mod.rs") };
+            scan_file(&candidate, &nested, context);
+        }
+        return;
+    }
+    // Only descend through containers. A nested function's local declarations
+    // must not accidentally be indexed as module-level items.
+    if matches!(kind, "source_file" | "declaration_list") {
+        let mut cursor = node.walk();
+        for child in node.named_children(&mut cursor) {
+            scan_tolerant_node(child, source, file, child_dir, module, context);
+        }
     }
 }

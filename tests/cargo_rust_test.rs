@@ -7,3 +7,9 @@ mod resolver_test;
 mod qualified_resolver_test;
 #[path = "cargo_rust/aliases_test.rs"]
 mod aliases_test;
+
+#[path = "cargo_rust/tolerant_test.rs"]
+mod tolerant_test;
+
+#[path = "cargo_rust/tolerant_alias_impl_test.rs"]
+mod tolerant_alias_impl_test;
