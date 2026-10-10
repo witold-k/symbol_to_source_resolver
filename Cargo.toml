@@ -4,3 +4,6 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
+cargo_metadata = "0.23"
+syn = { version = "3", features = ["full", "visit"] }
+fsscanner = { git = "https://github.com/witold-k/fsscanner", rev = "cb034d15865d20b5102c6ec5a12f8944e2e11058" }

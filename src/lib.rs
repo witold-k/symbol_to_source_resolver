@@ -1,13 +1,16 @@
 // SPDX-License-Identifier: Apache-2.0
+// Copyright (c) 2026 Witold Kaminski
+
 //! Resolve source-code symbols using a selectable language/build-system backend.
 
-mod cargo_rust;
+pub mod cargo_rust;
 mod compile_commands_clang;
 mod maven_java;
 
 use cargo_rust::CargoRustResolver;
 use compile_commands_clang::CompileCommandsClangResolver;
 use maven_java::MavenJavaResolver;
+use std::path::Path;
 
 /// Available symbol resolution backends.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -34,15 +37,27 @@ enum ResolverImpl {
 }
 
 impl Resolver {
+    /// Creates a resolver for the current working directory.
+    ///
+    /// Use `with_project_dir` to select a different Cargo project.
     pub fn new(backend: Backend) -> Self {
+        Self::with_project_dir(backend, ".")
+            .expect("failed to initialize resolver")
+    }
+
+    /// Creates a resolver for a specified project directory.
+    pub fn with_project_dir(
+        backend: Backend,
+        project_dir: impl AsRef<Path>,
+    ) -> Result<Self, cargo_metadata::Error> {
         let implementation = match backend {
-            Backend::CargoRust => ResolverImpl::CargoRust(CargoRustResolver),
+            Backend::CargoRust => ResolverImpl::CargoRust(CargoRustResolver::new(project_dir)?),
             Backend::MavenJava => ResolverImpl::MavenJava(MavenJavaResolver),
             Backend::CompileCommandsClang => {
                 ResolverImpl::CompileCommandsClang(CompileCommandsClangResolver)
             }
         };
-        Self { implementation }
+        Ok(Self { implementation })
     }
 
     pub fn resolve(&self, symbol: &str) -> String {

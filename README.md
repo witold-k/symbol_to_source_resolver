@@ -1,37 +1,76 @@
 # symbol_to_source_resolver
 
-> **Status: Planning only — not implemented yet.**
->
-> This repository currently documents an idea for a reusable Rust library. There is no working resolver, public API, or implementation. The examples below describe intended behavior, not existing functionality.
+Resolve source symbols to source files. Rust/Cargo has an initial implementation; Maven/Java and compile_commands/Clang are placeholders.
 
-## Goal
+## Rust usage
 
-Resolve a source-code symbol (such as a fully qualified class, struct, method, or module name) to **one or more source files** in a project.
+```rust
+use symbol_to_source_resolver::cargo_rust::CargoRustResolver;
 
-The library is intended for reuse by tools such as [aiagents](https://github.com/witold-k/aiagents), without depending on aiagents itself.
+fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let resolver = CargoRustResolver::new("/path/to/mycrate")?;
 
-## Examples of intended mappings
+    // All matching definitions and impl blocks across the Cargo workspace:
+    for path in resolver.resolve_files("MyStruct")? {
+        println!("{}", path.display());
+    }
 
-| Language | Symbol | Potential source files |
-| --- | --- | --- |
-| C++ | `foo::bar::MyClass` | `include/foo/bar/MyClass.hpp`, `src/MyClass.cpp` |
-| Rust | `foo::bar::MyStruct` | `src/foo/bar.rs`, `src/foo/bar/mod.rs` |
-| Java | `com.example.MyClass` | `src/main/java/com/example/MyClass.java` |
+    // Partially qualified: matches the end of a module path.
+    let files = resolver.resolve_files("mymod::MyStruct")?;
 
-These are illustrative guesses. In particular, C++ namespaces and class names do not imply a unique directory structure or filename.
+    // Fully qualified: crate name is included.
+    let files = resolver.resolve_files("mycrate::mymod::MyStruct")?;
+    Ok(())
+}
+```
 
-## Intended requirements
+For example, a declaration in `src/mymod.rs` and separate `impl MyStruct` blocks in `src/mymod/extra.rs` are returned together, provided the files are part of the Rust module tree.
 
-- Support C and C++, Rust, and Java, with room for further languages.
-- Accept qualified symbol names and return **multiple candidates** where appropriate.
-- Distinguish successful matches from guesses and missing results.
-- Keep filesystem discovery and language-specific matching logic modular.
-- Remain a small, reusable Rust library rather than a component tied to a single application.
+## Optional macro expansion
 
-## Possible approach (not decided)
+Install [cargo-expand](https://github.com/dtolnay/cargo-expand):
 
-A first version could combine filesystem path/name heuristics with language-specific conventions. Later versions might use parsers or a source-symbol index to locate declarations and definitions reliably. The exact API, indexing strategy, dependencies, and performance requirements are **still to be designed**.
+```sh
+cargo install cargo-expand
+cargo expand --version
+```
 
-## Current state
+Some toolchains require a nightly Rust toolchain for expansion; install one with
+`rustup toolchain install nightly` if needed. The resolver first scans source
+files with `syn`. If macro expansion is explicitly enabled and no match is found, it tries `cargo expand --lib` for
+workspace packages. If cargo-expand is unavailable or expansion fails, this
+fallback is skipped. Enable expansion explicitly with
+`CargoRustResolver::new(project_dir)?.with_macro_expansion(true)`.
+Expansion is disabled by default to prevent additional builds and long-running
+processes during normal symbol searches.
 
-**No implementation exists.** This README is a planning note, not a promise of supported functionality. Contributions to the design can begin before any code is added.
+**Important:** Expanded code does not reliably retain original source-file
+locations. A macro-generated match therefore returns the Cargo target root
+(e.g. `src/lib.rs`) as a *candidate*, not the exact macro definition or
+invocation file. Expansion may also be slow.
+
+## Aliases and re-exports
+
+Simple named imports and re-exports are followed, including:
+
+```rust
+use crate::model::MyStruct as Alias;
+pub use crate::model::MyStruct;
+```
+
+Queries such as `Alias` or `mycrate::Alias` can return the original
+definition file. Glob imports and more complex semantic name resolution are
+not yet supported.
+
+## File discovery
+
+Rust source files are discovered using [`fsscanner`](https://github.com/witold-k/fsscanner) (`collect_files_fast` with the `rs` extension). Cargo metadata locates the workspace targets; module parsing continues to determine Rust module ownership. The dependency is fetched from GitHub by Cargo and pinned to a specific
+commit on `fsscanner`'s `master` branch for reproducible builds.
+
+## Current limitations
+
+- Uses `cargo metadata` to discover workspace targets, then `syn` to inspect reachable source files. Cargo itself does not index symbol definitions.
+- Qualified names match **path suffixes**. An unqualified name can match multiple types; results are sorted and deduplicated.
+- Basic `mod`, inline modules, `#[path = "..."]`, and simple `crate::`, `self::`, `super::` impl paths are supported.
+- Named `use` aliases and re-exports are handled syntactically; glob imports, cross-crate resolution, conditional compilation, type aliases, and macro source provenance remain limited.
+- This returns file candidates, not exact line ranges. Java and C/C++ are not implemented yet.
