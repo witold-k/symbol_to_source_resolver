@@ -4,11 +4,11 @@
 //! Resolve source-code symbols using a selectable language/build-system backend.
 
 pub mod cargo_rust;
-mod compile_commands_clang;
+pub mod compile_commands_clang;
 pub mod maven_java;
 
 use cargo_rust::CargoRustResolver;
-use compile_commands_clang::CompileCommandsClangResolver;
+use compile_commands_clang::{CompileCommandsClangError, CompileCommandsClangResolver};
 use maven_java::{MavenJavaError, MavenJavaResolver};
 use std::path::Path;
 
@@ -30,12 +30,14 @@ pub trait SymbolResolver {
 pub enum ResolverError {
     Cargo(cargo_metadata::Error),
     Maven(MavenJavaError),
+    Clang(CompileCommandsClangError),
 }
 impl std::fmt::Display for ResolverError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::Cargo(error) => write!(f, "{error}"),
             Self::Maven(error) => write!(f, "{error}"),
+            Self::Clang(error) => write!(f, "{error}"),
         }
     }
 }
@@ -45,6 +47,10 @@ impl From<cargo_metadata::Error> for ResolverError {
 }
 impl From<MavenJavaError> for ResolverError {
     fn from(error: MavenJavaError) -> Self { Self::Maven(error) }
+}
+
+impl From<CompileCommandsClangError> for ResolverError {
+    fn from(error: CompileCommandsClangError) -> Self { Self::Clang(error) }
 }
 
 /// A symbol resolver configured for a particular backend.
@@ -76,7 +82,7 @@ impl Resolver {
             Backend::CargoRust => ResolverImpl::CargoRust(CargoRustResolver::new(project_dir)?),
             Backend::MavenJava => ResolverImpl::MavenJava(MavenJavaResolver::new(project_dir)?),
             Backend::CompileCommandsClang => {
-                ResolverImpl::CompileCommandsClang(CompileCommandsClangResolver)
+                ResolverImpl::CompileCommandsClang(CompileCommandsClangResolver::new(project_dir)?)
             }
         };
         Ok(Self { implementation })
